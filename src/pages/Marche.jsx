@@ -1,22 +1,150 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import MarcheBanner from '../components/marche/MarcheBanner'
 import CompteSelectionne from '../components/CompteSelectionne'
 import DonneesMarcheToolbar from '../components/marche/DonneesMarcheToolbar'
 import TickerWidget from '../components/marche/TickerWidget'
+import { fetchMarketSnapshot, computeTopFromActions, mapIndices } from '../services/marketApi'
+
+const DEFAULT_FOCUS_ACTIONS = [
+  { name: 'BRVM Composite', cours: 245.67, change: 2.34 },
+  { name: 'BRVM 30', cours: 198.45, change: -1.23 },
+  { name: 'BRVM Prestige', cours: 312.89, change: 3.45 },
+]
+
+const DEFAULT_TOP_HAUSSE = [
+  { ticker: 'SONATEL', cours: 12500, change: 2.5 },
+  { ticker: 'SGB', cours: 3200, change: 3.2 },
+  { ticker: 'ORANGE', cours: 8900, change: 1.8 },
+  { ticker: 'BOA', cours: 4500, change: 1.2 },
+  { ticker: 'CGF', cours: 2100, change: 0.8 },
+]
+
+const DEFAULT_TOP_BAISSE = [
+  { ticker: 'CGF', cours: 2100, change: -1.2 },
+  { ticker: 'BOA', cours: 4500, change: -0.5 },
+  { ticker: 'ORANGE', cours: 8900, change: -0.3 },
+  { ticker: 'SGB', cours: 3200, change: -0.2 },
+  { ticker: 'SONATEL', cours: 12500, change: -0.1 },
+]
+
+const DEFAULT_MEILLEURS_VOLUMES = [
+  { ticker: 'SONATEL', volume: 125000 },
+  { ticker: 'ORANGE', volume: 98000 },
+  { ticker: 'BOA', volume: 75000 },
+  { ticker: 'SGB', volume: 65000 },
+  { ticker: 'CGF', volume: 45000 },
+]
+
+const KNOWN_OBLIGATION_KEYS = [
+  'obligations',
+  'Obligations',
+  'obligationsCotees',
+  'ObligationsCotees',
+  'obligationsListees',
+  'ObligationsListees',
+  'obligationsMarche',
+  'ObligationsMarche',
+  'emissionsObligataires',
+  'EmissionsObligataires',
+]
+
+const pickObligations = (payload) => {
+  if (!payload || typeof payload !== 'object') return []
+  for (const key of KNOWN_OBLIGATION_KEYS) {
+    const value = payload[key]
+    if (Array.isArray(value) && value.length) {
+      return value
+    }
+  }
+  return (
+    Object.values(payload).find(
+      (value) =>
+        Array.isArray(value) &&
+        value.some(
+          (item) =>
+            item &&
+            typeof item === 'object' &&
+            ('tauxFacial' in item ||
+              'dateEmission' in item ||
+              'dateEcheance' in item ||
+              'dateEcheanece' in item ||
+              'valeurDernierCoupon' in item ||
+              'coursJour' in item),
+        ),
+    ) || []
+  )
+}
+
+const formatDateString = (value) => {
+  if (!value || typeof value !== 'string') return '—'
+  const [datePart] = value.split(' ')
+  return datePart || value
+}
 
 const Marche = () => {
-  const [selectedAction, setSelectedAction] = useState('BRVM Composite')
+  const [selectedAction, setSelectedAction] = useState(DEFAULT_FOCUS_ACTIONS[0].name)
   const [activeTab, setActiveTab] = useState('selection')
+  const [continuRows, setContinuRows] = useState([])
+  const [obligationsRows, setObligationsRows] = useState([])
+  const [indicesRows, setIndicesRows] = useState([])
+  const [fcpRows, setFcpRows] = useState([])
+  const [continuLoading, setContinuLoading] = useState(false)
+  const [continuError, setContinuError] = useState('')
 
-  const actions = [
-    { name: 'BRVM Composite', cours: 245.67, change: 2.34 },
-    { name: 'BRVM 30', cours: 198.45, change: -1.23 },
-    { name: 'BRVM Prestige', cours: 312.89, change: 3.45 },
-  ]
+  useEffect(() => {
+    let mounted = true
+    setContinuLoading(true)
+    ;(async () => {
+      try {
+        const data = await fetchMarketSnapshot()
+        if (!mounted) return
+        const rows = Array.isArray(data?.actionsCotees) ? data.actionsCotees : []
+        setContinuRows(rows)
+        const obligations = pickObligations(data)
+        setObligationsRows(Array.isArray(obligations) ? obligations : [])
+        const mappedIndices = mapIndices(Array.isArray(data?.Indices) ? data.Indices : [])
+        setIndicesRows(mappedIndices.length ? mappedIndices : [])
+        const fcps = Array.isArray(data?.FCPCGF) ? data.FCPCGF : []
+        setFcpRows(fcps.length ? fcps : [])
+        setContinuError('')
+      } catch (e) {
+        if (mounted) {
+          setContinuError('Impossible de récupérer les actions (Continu).')
+        }
+      } finally {
+        if (mounted) {
+          setContinuLoading(false)
+        }
+      }
+    })()
+    return () => {
+      mounted = false
+    }
+  }, [])
 
-  const selectedActionData = actions.find((a) => a.name === selectedAction) ?? actions[0]
+  const dynamicFocusActions = useMemo(() => {
+    if (!continuRows.length) return []
+    return continuRows.slice(0, 3).map((row) => ({
+      name: row.Nom || row.Symbol || row.titre || 'N/A',
+      cours: Number(row.coursVeille ?? row.coursCloture ?? 0) || 0,
+      change: Number(row.variationP ?? 0) || 0,
+    }))
+  }, [continuRows])
+
+  const focusActions = dynamicFocusActions.length ? dynamicFocusActions : DEFAULT_FOCUS_ACTIONS
+
+  useEffect(() => {
+    if (!focusActions.length) return
+    const exists = focusActions.some((action) => action.name === selectedAction)
+    if (!exists) {
+      setSelectedAction(focusActions[0].name)
+    }
+  }, [focusActions, selectedAction])
+
+  const selectedActionData =
+    focusActions.find((a) => a.name === selectedAction) ?? focusActions[0] ?? { cours: 0, change: 0 }
 
   const historiqueData = [
     { date: '01/01', valeur: 240 },
@@ -27,41 +155,25 @@ const Marche = () => {
     { date: '06/01', valeur: 246 },
   ]
 
-  const topHausse = [
-    { ticker: 'SONATEL', cours: 12500, change: 2.5 },
-    { ticker: 'SGB', cours: 3200, change: 3.2 },
-    { ticker: 'ORANGE', cours: 8900, change: 1.8 },
-    { ticker: 'BOA', cours: 4500, change: 1.2 },
-    { ticker: 'CGF', cours: 2100, change: 0.8 },
-  ]
+  const tops = useMemo(() => {
+    if (!continuRows.length) {
+      return {
+        topHausse: DEFAULT_TOP_HAUSSE,
+        topBaisse: DEFAULT_TOP_BAISSE,
+        meilleursVolumes: DEFAULT_MEILLEURS_VOLUMES,
+      }
+    }
+    return computeTopFromActions(continuRows)
+  }, [continuRows])
 
-  const topBaisse = [
-    { ticker: 'CGF', cours: 2100, change: -1.2 },
-    { ticker: 'BOA', cours: 4500, change: -0.5 },
-    { ticker: 'ORANGE', cours: 8900, change: -0.3 },
-    { ticker: 'SGB', cours: 3200, change: -0.2 },
-    { ticker: 'SONATEL', cours: 12500, change: -0.1 },
-  ]
-
-  const meilleursVolumes = [
-    { ticker: 'SONATEL', volume: 125000 },
-    { ticker: 'ORANGE', volume: 98000 },
-    { ticker: 'BOA', volume: 75000 },
-    { ticker: 'SGB', volume: 65000 },
-    { ticker: 'CGF', volume: 45000 },
-  ]
-
-  const titres = [
-    { titre: 'SONATEL', dernier: 12500, varPercent: 2.5, var: 305, coursVeille: 12195 },
-    { titre: 'ORANGE', dernier: 8900, varPercent: 1.8, var: 157, coursVeille: 8743 },
-    { titre: 'BOA', dernier: 4500, varPercent: -0.5, var: -23, coursVeille: 4523 },
-  ]
+  const hasIndices = indicesRows.length > 0
+  const hasFcps = fcpRows.length > 0
 
   const tabs = [
-    { id: 'continu', label: 'Continu', count: 4 },
-    { id: 'obligations', label: 'Obligations', count: 21 },
-    { id: 'selection', label: 'Ma sélection', count: null },
-    { id: 'indices', label: 'Indices', count: null },
+    { id: 'continu', label: 'Continu', count: continuRows.length || null },
+    { id: 'obligations', label: 'Obligations', count: obligationsRows.length || null },
+    { id: 'indices', label: 'Indices', count: indicesRows.length || null },
+    { id: 'fcp', label: 'FCP', count: fcpRows.length || null },
   ]
 
   const focusMetrics = [
@@ -134,59 +246,210 @@ const Marche = () => {
               ))}
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px]">
-                <thead>
-                  <tr className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
-                    <th className="px-4 py-3">Titres</th>
-                    <th className="px-4 py-3 text-right">Dern</th>
-                    <th className="px-4 py-3 text-right">Var.%</th>
-                    <th className="px-4 py-3 text-right">Var.</th>
-                    <th className="px-4 py-3 text-right">Cours veille</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {titres.length === 0 ? (
-                    <tr>
-                      <td colSpan="5" className="px-4 py-10 text-center text-slate-400">
-                        Pas de lignes à afficher.
-                      </td>
+              {activeTab === 'continu' ? (
+                <table className="w-full min-w-[900px] text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-4 py-3">Nom</th>
+                      <th className="px-4 py-3">Symbole</th>
+                      <th className="px-4 py-3 text-right">Cours veille</th>
+                      <th className="px-4 py-3 text-right">Variation %</th>
+                      <th className="px-4 py-3 text-right">Volume</th>
                     </tr>
-                  ) : (
-                    titres.map((titre) => (
-                      <tr
-                        key={titre.titre}
-                        className="bg-white/70 transition hover:bg-primary/5"
-                      >
-                        <td className="px-4 py-3 font-semibold text-primary">{titre.titre}</td>
-                        <td className="px-4 py-3 text-right text-slate-700">{titre.dernier.toLocaleString('fr-FR')}</td>
-                        <td className="px-4 py-3 text-right">
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${
-                              titre.varPercent >= 0
-                                ? 'bg-emerald-100 text-emerald-600'
-                                : 'bg-rose-100 text-rose-600'
-                            }`}
-                          >
-                            {titre.varPercent >= 0 ? '+' : ''}
-                            {titre.varPercent}%
-                          </span>
-                        </td>
-                        <td
-                        className={`px-4 py-3 text-right text-sm font-medium ${
-                          titre.var >= 0 ? 'text-emerald-600' : 'text-rose-600'
-                        }`}
-                        >
-                          {titre.var >= 0 ? '+' : ''}
-                          {titre.var}
-                        </td>
-                        <td className="px-4 py-3 text-right text-slate-500">
-                          {titre.coursVeille.toLocaleString('fr-FR')}
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {continuLoading ? (
+                      <tr>
+                        <td colSpan="5" className="px-4 py-10 text-center text-slate-400">
+                          Chargement…
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : continuError ? (
+                      <tr>
+                        <td colSpan="5" className="px-4 py-10 text-center text-rose-500">
+                          {continuError}
+                        </td>
+                      </tr>
+                    ) : continuRows.length === 0 ? (
+                      <tr>
+                        <td colSpan="5" className="px-4 py-10 text-center text-slate-400">
+                          Pas de lignes à afficher.
+                        </td>
+                      </tr>
+                    ) : (
+                      continuRows.map((row) => {
+                        const variation = Number(row.variationP ?? row.varPercent ?? 0)
+                        const coursVeille = Number(row.coursVeille ?? row.coursCloture ?? 0)
+                        const volume = Number(row.volume ?? 0)
+                        return (
+                          <tr key={`${row.Symbol || row.Nom}`} className="bg-white/80 hover:bg-primary/5 transition">
+                            <td className="px-4 py-3 text-primary font-semibold">{row.Nom || row.Symbol}</td>
+                            <td className="px-4 py-3">{row.Symbol || '—'}</td>
+                            <td className="px-4 py-3 text-right">{coursVeille.toLocaleString('fr-FR')}</td>
+                            <td
+                              className={`px-4 py-3 text-right ${variation >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}
+                            >
+                              {variation >= 0 ? '+' : ''}
+                              {variation.toLocaleString('fr-FR')}%
+                            </td>
+                            <td className="px-4 py-3 text-right">{volume.toLocaleString('fr-FR')}</td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              ) : activeTab === 'obligations' ? (
+                <table className="w-full min-w-[960px] text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-4 py-3">Nom</th>
+                      <th className="px-4 py-3">Symbole</th>
+                      <th className="px-4 py-3 text-right">Cours jour</th>
+                      <th className="px-4 py-3 text-right">Taux facial</th>
+                      <th className="px-4 py-3 text-right">Dernier coupon</th>
+                      <th className="px-4 py-3 text-right">Émission</th>
+                      <th className="px-4 py-3 text-right">Dernier paiement</th>
+                      <th className="px-4 py-3 text-right">Échéance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {continuLoading ? (
+                      <tr>
+                        <td colSpan="8" className="px-4 py-10 text-center text-slate-400">
+                          Chargement…
+                        </td>
+                      </tr>
+                    ) : continuError ? (
+                      <tr>
+                        <td colSpan="8" className="px-4 py-10 text-center text-rose-500">
+                          {continuError}
+                        </td>
+                      </tr>
+                    ) : obligationsRows.length === 0 ? (
+                      <tr>
+                        <td colSpan="8" className="px-4 py-10 text-center text-slate-400">
+                          Pas de lignes à afficher.
+                        </td>
+                      </tr>
+                    ) : (
+                      obligationsRows.map((row) => {
+                        const coursJour = Number(row.coursJour ?? row.coursVeille ?? 0)
+                        const tauxFacial = Number(row.tauxFacial ?? 0)
+                        const dernierCoupon = Number(row.valeurDernierCoupon ?? 0)
+                        return (
+                          <tr key={`${row.Symbol || row.Nom}`} className="bg-white/80 hover:bg-primary/5 transition">
+                            <td className="px-4 py-3 text-primary font-semibold">{row.Nom || row.Symbol}</td>
+                            <td className="px-4 py-3">{row.Symbol || '—'}</td>
+                            <td className="px-4 py-3 text-right">{coursJour.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                            <td className="px-4 py-3 text-right">{tauxFacial.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}%</td>
+                            <td className="px-4 py-3 text-right">{dernierCoupon.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                            <td className="px-4 py-3 text-right">{formatDateString(row.dateEmission)}</td>
+                            <td className="px-4 py-3 text-right">{formatDateString(row.dateDernierPaiement)}</td>
+                            <td className="px-4 py-3 text-right">
+                              {formatDateString(row.dateEcheance || row.dateEcheanece)}
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              ) : activeTab === 'indices' ? (
+                <table className="w-full min-w-[640px]">
+                  <thead>
+                    <tr className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-4 py-3">Nom</th>
+                      <th className="px-4 py-3">Symbole</th>
+                      <th className="px-4 py-3 text-right">Cours</th>
+                      <th className="px-4 py-3 text-right">Variation %</th>
+                      <th className="px-4 py-3 text-right">Dernière valeur connue</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {continuLoading ? (
+                      <tr>
+                        <td colSpan="5" className="px-4 py-10 text-center text-slate-400">
+                          Chargement…
+                        </td>
+                      </tr>
+                    ) : continuError ? (
+                      <tr>
+                        <td colSpan="5" className="px-4 py-10 text-center text-rose-500">
+                          {continuError}
+                        </td>
+                      </tr>
+                    ) : !hasIndices ? (
+                      <tr>
+                        <td colSpan="5" className="px-4 py-10 text-center text-slate-400">
+                          Pas de lignes à afficher.
+                        </td>
+                      </tr>
+                    ) : (
+                      indicesRows.map((indice) => {
+                        const variation = Number(indice.change ?? indice.variation ?? indice.var ?? 0)
+                        const prix = Number(indice.value ?? indice.prix ?? 0)
+                        return (
+                          <tr key={indice.code || indice.titre || indice.nom} className="bg-white/70 transition hover:bg-primary/5">
+                            <td className="px-4 py-3 font-semibold text-primary">{indice.name || indice.nom || indice.Nom}</td>
+                            <td className="px-4 py-3 text-slate-600">{indice.code || indice.titre || indice.Titre || '—'}</td>
+                            <td className="px-4 py-3 text-right text-slate-700">{prix.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}</td>
+                            <td className={`px-4 py-3 text-right ${variation >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {variation >= 0 ? '+' : ''}
+                              {variation.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}%
+                            </td>
+                            <td className="px-4 py-3 text-right text-slate-500">
+                              {prix.toLocaleString('fr-FR', { minimumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        )
+                      })
+                    )}
+                  </tbody>
+                </table>
+              ) : activeTab === 'fcp' ? (
+                <table className="w-full min-w-[640px]">
+                  <thead>
+                    <tr className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
+                      <th className="px-4 py-3">Nom</th>
+                      <th className="px-4 py-3">Symbole</th>
+                      <th className="px-4 py-3 text-right">Valeur liquidative</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-sm">
+                    {continuLoading ? (
+                      <tr>
+                        <td colSpan="3" className="px-4 py-10 text-center text-slate-400">
+                          Chargement…
+                        </td>
+                      </tr>
+                    ) : continuError ? (
+                      <tr>
+                        <td colSpan="3" className="px-4 py-10 text-center text-rose-500">
+                          {continuError}
+                        </td>
+                      </tr>
+                    ) : !hasFcps ? (
+                      <tr>
+                        <td colSpan="3" className="px-4 py-10 text-center text-slate-400">
+                          Pas de lignes à afficher.
+                        </td>
+                      </tr>
+                    ) : (
+                      fcpRows.map((fcp) => (
+                        <tr key={fcp.Titre || fcp.titre || fcp.nom} className="bg-white/70 transition hover:bg-primary/5">
+                          <td className="px-4 py-3 font-semibold text-primary">{fcp.Nom || fcp.nom}</td>
+                          <td className="px-4 py-3 text-slate-600">{(fcp.Titre || fcp.titre || '').trim() || '—'}</td>
+                          <td className="px-4 py-3 text-right text-slate-700">
+                            {Number(fcp.prix ?? fcp.Valeur ?? fcp.valeur ?? 0).toLocaleString('fr-FR', { minimumFractionDigits: 4 })}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              ) : null}
+              )}
             </div>
           </div>
 
@@ -199,7 +462,7 @@ const Marche = () => {
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                {actions.map((action) => (
+                {focusActions.map((action) => (
                   <button
                     key={action.name}
                     onClick={() => setSelectedAction(action.name)}
@@ -278,7 +541,7 @@ const Marche = () => {
             <div className="rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-white p-6 shadow-sm">
               <h3 className="text-lg font-semibold text-emerald-700 mb-4">Top 5 en Hausse</h3>
               <div className="space-y-3">
-                {topHausse.map((action) => (
+                  {tops.topHausse.map((action) => (
                   <div
                     key={action.ticker}
                     className="flex items-center justify-between rounded-2xl bg-white/70 px-4 py-3 border border-emerald-100"
@@ -298,7 +561,7 @@ const Marche = () => {
             <div className="rounded-3xl border border-rose-100 bg-gradient-to-br from-rose-50 via-white to-white p-6 shadow-sm">
               <h3 className="text-lg font-semibold text-rose-700 mb-4">Top 5 en Baisse</h3>
               <div className="space-y-3">
-                {topBaisse.map((action) => (
+                  {tops.topBaisse.map((action) => (
                   <div
                     key={action.ticker}
                     className="flex items-center justify-between rounded-2xl bg-white/70 px-4 py-3 border border-rose-100"
@@ -318,7 +581,7 @@ const Marche = () => {
             <div className="rounded-3xl border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-white p-6 shadow-sm">
               <h3 className="text-lg font-semibold text-primary mb-4">Meilleurs Volumes</h3>
               <div className="space-y-3">
-                {meilleursVolumes.map((action) => (
+                  {tops.meilleursVolumes.map((action) => (
                   <div
                     key={action.ticker}
                     className="flex items-center justify-between rounded-2xl bg-white/70 px-4 py-3 border border-blue-100"
@@ -353,7 +616,7 @@ const Marche = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {meilleursVolumes.map((action) => (
+                  {tops.meilleursVolumes.map((action) => (
                     <tr key={action.ticker} className="hover:bg-primary/5">
                       <td className="px-4 py-3 font-semibold text-primary">{action.ticker}</td>
                       <td className="px-4 py-3">{action.volume.toLocaleString('fr-FR')}</td>
