@@ -31,9 +31,8 @@ const Layout = () => {
   const location = useLocation()
 
   const menuItems = [
-    { path: '/', icon: TrendingUp, label: 'Résumé Marché' },
+    { path: '/', icon: TrendingUp, label: 'Accueil' },
     { path: '/marche', icon: BarChart3, label: 'Marché' },
-    { path: '/res-marche', icon: TrendingUp, label: 'Résumé Marché' },
     { path: '/portefeuille', icon: Wallet, label: 'Portefeuille' },
     { path: '/ordres', icon: ShoppingCart, label: 'Ordres' },
   ]
@@ -72,7 +71,7 @@ const Layout = () => {
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col text-slate-900">
       {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-xl border-b border-slate-200 shadow-sm">
+      <header className="fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-xl border-b border-slate-200 shadow-sm">
         {/* Main Navigation */}
         <div className="px-4 md:px-6 py-3">
           <div className="flex items-center justify-between gap-4">
@@ -208,14 +207,12 @@ const Layout = () => {
                   <Coins size={16} />
                   Tarifications
                 </button>
-                <button className="hidden lg:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-white font-medium hover:bg-primary-light transition">
+                <button className="hidden xl:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-white font-medium hover:bg-primary-light transition">
                   <Lock size={16} />
                   Mot de passe
                 </button>
               </div>
-              <button className="inline-flex items-center justify-center w-10 h-10 rounded-full border border-slate-200 text-slate-500 hover:text-primary hover:border-primary transition">
-                <RefreshCw size={18} />
-              </button>
+          
               <button className="relative inline-flex items-center justify-center w-10 h-10 rounded-full border border-slate-200 text-slate-500 hover:text-primary hover:border-primary transition">
                 <Bell size={18} />
                 <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-rose-500"></span>
@@ -305,7 +302,7 @@ const Layout = () => {
       </header>
 
       {/* Page Content */}
-      <main className="flex-1 overflow-y-auto px-4 md:px-6 py-8 bg-gradient-to-br from-slate-50 via-white to-slate-200">
+      <main className="flex-1 overflow-y-auto px-4 md:px-6 pt-40 md:pt-44 pb-8 bg-gradient-to-br from-slate-50 via-white to-slate-200">
         <div className="mx-auto max-w-[1440px]">
           <Outlet />
         </div>
