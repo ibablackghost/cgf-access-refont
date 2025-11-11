@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import {
   TrendingUp,
@@ -60,13 +60,71 @@ const Layout = () => {
 
   const allMenuItems = [...menuItems, ...menuItemsSecondary, ...menuItemsAdvanced, ...menuItemsSettings]
 
-  const indices = [
-    { name: 'BRVM C', value: 336.8, change: 0.09 },
-    { name: 'BRVM 30', value: 164.24, change: 0.1 },
-    { name: 'BRVM PRESTIGE', value: 141.27, change: 0.76 },
-  ]
+  const [marketStatus, setMarketStatus] = useState('')
+  const [valeurTotale, setValeurTotale] = useState(0)
+  const [actionsTicker, setActionsTicker] = useState([])
+  const [lastUpdate, setLastUpdate] = useState(null)
+
+  useEffect(() => {
+    let mounted = true
+    let intervalId
+    const load = async () => {
+      try {
+        const res = await fetch('http://192.168.100.2/cgftradeserver/Service.svc/GetMarketSnapshot', { headers: { Accept: 'application/json' } })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+        if (!mounted) return
+        setMarketStatus(data?.MarketStatus || '')
+        const total = (data?.actionsCotees || []).reduce((sum, a) => {
+          const v = Number(a.volume) || 0
+          const p = Number(a.coursCloture ?? a.coursJour ?? a.coursVeille) || 0
+          return sum + v * p
+        }, 0)
+        setValeurTotale(total)
+        const ticker = (data?.actionsCotees || []).map((a) => ({
+          symbol: (a.Symbol || '').trim(),
+          nom: a.Nom,
+          dernier: Number(a.coursCloture ?? a.coursJour ?? a.coursVeille) || 0,
+          varp: Number(a.variationP) || 0,
+        }))
+        setActionsTicker(ticker)
+        setLastUpdate(new Date())
+      } catch (e) {
+        // silencieux
+      }
+    }
+    load()
+    intervalId = setInterval(load, 60000)
+    return () => {
+      mounted = false
+      if (intervalId) clearInterval(intervalId)
+    }
+  }, [])
 
   const currentLabel = allMenuItems.find((item) => item.path === location.pathname)?.label || 'CGF Access'
+
+  const tickerItems = useMemo(() => {
+    if (!actionsTicker.length) return []
+    const filtered = actionsTicker.filter((item) => (item.symbol || item.nom) && Number.isFinite(item.dernier))
+    const base = (filtered.length ? filtered : actionsTicker).slice(0, 240)
+    if (!base.length) return []
+    const repeats = base.length >= 80 ? 3 : Math.max(5, Math.ceil(200 / base.length))
+    return Array.from({ length: repeats }).flatMap(() => base)
+  }, [actionsTicker])
+
+  const tickerDuration = useMemo(() => {
+    if (!tickerItems.length) return 0
+    return Math.max(130, Math.round(tickerItems.length * 5.5))
+  }, [tickerItems])
+
+  const formattedUpdate = useMemo(() => {
+    if (!lastUpdate) return ''
+    return `${lastUpdate.toLocaleDateString('fr-FR')} ${lastUpdate.toLocaleTimeString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })}`
+  }, [lastUpdate])
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col text-slate-900">
@@ -265,38 +323,44 @@ const Layout = () => {
           </div>
         )}
 
-        {/* Indices BRVM Bar */}
-        <div className="border-t border-slate-200 bg-slate-50 px-4 md:px-6 py-3">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-              <span className="text-sm font-semibold text-slate-700">Marché ouvert</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-4">
-              {indices.map((indice) => (
-                <div
-                  key={indice.name}
-                  className="flex items-center gap-3 px-3 py-1 rounded-full bg-white border border-slate-200"
-                >
-                  <span className="text-xs uppercase tracking-widest text-slate-400">{indice.name}</span>
-                  <span className="text-sm font-semibold text-primary">{indice.value.toFixed(2)}</span>
+        {/* Ticker Actions défilant */}
+        <div className="border-t border-slate-200 bg-slate-50 px-0 md:px-0 py-0 relative overflow-hidden">
+          <style>{`@keyframes tickerScroll{0%{transform:translateX(100%)}100%{transform:translateX(-100%)}}`}</style>
+          <div className="flex items-center gap-3 px-4 py-2">
+            <div className={`w-2 h-2 rounded-full ${marketStatus?.toLowerCase().includes('fer') ? 'bg-rose-500' : 'bg-emerald-500'} animate-pulse`}></div>
+            <span className="text-xs font-semibold text-slate-700">{marketStatus || 'Marché'}</span>
+            <span className="text-xs text-slate-500 ml-auto hidden md:inline">
+              Valeur totale&nbsp;: <strong className="text-primary">{valeurTotale.toLocaleString('fr-FR')} FCFA</strong>
+            </span>
+            {formattedUpdate && (
+              <span className="text-[11px] uppercase tracking-widest text-slate-400 hidden md:inline">
+                Maj {formattedUpdate}
+              </span>
+            )}
+          </div>
+          <div className="whitespace-nowrap overflow-hidden relative">
+            <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-12 bg-gradient-to-l from-slate-50 via-slate-50/70 to-transparent"></div>
+            {tickerItems.length > 0 ? (
+              <div
+                style={{ animation: `tickerScroll ${tickerDuration}s linear infinite` }}
+                className="inline-flex min-w-full gap-3 py-2"
+              >
+                {tickerItems.map((a, idx) => (
                   <span
-                    className={`text-xs font-semibold ${
-                      indice.change >= 0 ? 'text-emerald-600' : 'text-rose-600'
-                    }`}
+                    key={`${a.symbol || a.nom}-${idx}`}
+                    className="inline-flex items-center gap-2 px-4 py-1.5 text-xs rounded-full border border-slate-200 bg-white shadow-sm"
                   >
-                    {indice.change >= 0 ? '+' : ''}
-                    {indice.change.toFixed(2)}%
+                    <span className="font-semibold text-primary">{a.symbol || '—'}</span>
+                    <span className="text-slate-600">{a.dernier.toLocaleString('fr-FR')}</span>
+                    <span className={`${a.varp >= 0 ? 'text-emerald-600' : 'text-rose-600'} font-semibold`}>
+                      {a.varp >= 0 ? `+${a.varp}%` : `${a.varp}%`}
+                    </span>
                   </span>
-                </div>
-              ))}
-              <div className="text-xs text-slate-500">
-                Valeur totale : <strong className="text-primary">1 112 901 547 FCFA</strong>
+                ))}
               </div>
-              <div className="text-xs text-slate-400">
-                MAJ : {new Date().toLocaleString('fr-FR', { timeZone: 'GMT' })} GMT
-              </div>
-            </div>
+            ) : (
+              <div className="px-4 py-2 text-xs text-slate-400">Aucune action à afficher</div>
+            )}
           </div>
         </div>
       </header>

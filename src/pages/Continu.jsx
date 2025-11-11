@@ -48,7 +48,7 @@ const Continu = () => {
               <tr className="bg-slate-900/95 text-white text-xs uppercase tracking-widest">
                 <th className="px-4 py-3 text-left">Nom</th>
                 <th className="px-4 py-3 text-left">Symbole</th>
-                <th className="px-4 py-3 text-right">Cours veille</th>
+                <th className="px-4 py-3 text-right">Cours clôture</th>
                 <th className="px-4 py-3 text-right">Variation %</th>
                 <th className="px-4 py-3 text-right">Volume</th>
               </tr>
@@ -58,9 +58,9 @@ const Continu = () => {
                 <tr key={row.Symbol} className="bg-white/80 hover:bg-primary/5">
                   <td className="px-4 py-3 text-primary font-semibold">{row.Nom}</td>
                   <td className="px-4 py-3">{row.Symbol}</td>
-                  <td className="px-4 py-3 text-right">{Number(row.coursVeille || 0).toLocaleString('fr-FR')}</td>
-                  <td className={`px-4 py-3 text-right ${Number(row.variationP || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                    {Number(row.variationP || 0).toLocaleString('fr-FR')}%
+                  <td className="px-4 py-3 text-right">{Number(row.coursCloture ?? row.coursJour ?? row.coursVeille ?? 0).toLocaleString('fr-FR')}</td>
+                  <td className={`px-4 py-3 text-right ${Number(row.variationP ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {Number(row.variationP ?? 0).toLocaleString('fr-FR')}%
                   </td>
                   <td className="px-4 py-3 text-right">{Number(row.volume || 0).toLocaleString('fr-FR')}</td>
                 </tr>
